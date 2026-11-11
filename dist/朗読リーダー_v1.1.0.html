@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" href="data:," />
+    <title>朗読リーダー</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+      :root {
+        --bg: #f2f1ec;
+        --surface: #fdfcf9;
+        --surface-2: #e9e7df;
+        --ink: #211d17;
+        --ink-soft: #5c564c;
+        --line: #d8d3c6;
+        --accent: #b03a24;
+        --accent-ink: #ffffff;
+        --hl: rgba(176, 58, 36, 0.16);
+        --hl-strong: rgba(176, 58, 36, 0.30);
+        --shadow: 0 8px 30px rgba(30, 25, 18, 0.18);
+        --reader-size: 19px;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #141518;
+          --surface: #1d1f24;
+          --surface-2: #26282e;
+          --ink: #ece7dc;
+          --ink-soft: #a49c8d;
+          --line: #3a3c42;
+          --accent: #d96a4e;
+          --accent-ink: #1a120e;
+          --hl: rgba(217, 106, 78, 0.28);
+          --hl-strong: rgba(217, 106, 78, 0.45);
+          --shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--ink);
+        font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+        -webkit-text-size-adjust: 100%;
+      }
+      button, select, input, textarea { font: inherit; color: inherit; }
+      button, select, summary, input:not([type="checkbox"], [type="radio"]) { min-height: 2.25rem; }
+      button { cursor: pointer; }
+      [hidden] { display: none !important; }
+
+      /* ---------- load screen ---------- */
+      .load-wrap {
+        min-height: 100dvh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 28px 20px 48px;
+        gap: 18px;
+      }
+      .load-card {
+        width: min(560px, 100%);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 28px 24px;
+        box-shadow: var(--shadow);
+      }
+      .load-card h1 {
+        margin: 0 0 6px;
+        font-size: 1.35rem;
+        font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+        letter-spacing: 0.04em;
+      }
+      .load-card p.lead { margin: 0 0 20px; color: var(--ink-soft); font-size: 0.92rem; line-height: 1.7; }
+      .drop {
+        border: 1.5px dashed var(--line);
+        border-radius: 10px;
+        padding: 26px 16px;
+        text-align: center;
+        color: var(--ink-soft);
+        font-size: 0.9rem;
+        line-height: 1.8;
+        transition: border-color .15s, background .15s;
+      }
+      .drop.drag { border-color: var(--accent); background: var(--hl); color: var(--ink); }
+      .drop .big { display: block; font-size: 1rem; color: var(--ink); font-weight: 600; }
+      .btn {
+        display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+        border: 1px solid var(--line);
+        background: var(--surface-2);
+        border-radius: 9px;
+        padding: 8px 16px;
+        font-size: 0.92rem;
+        min-height: 44px;
+      }
+      .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+      .btn:active { transform: translateY(1px); }
+      .load-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+      .paste-box { margin-top: 16px; }
+      .paste-box textarea {
+        width: 100%; min-height: 150px; resize: vertical;
+        border: 1px solid var(--line); border-radius: 9px;
+        background: var(--bg); padding: 12px; line-height: 1.7;
+      }
+      .paste-box .row { display: flex; gap: 10px; margin-top: 10px; align-items: center; }
+      .paste-box input[type="text"] {
+        flex: 1; border: 1px solid var(--line); border-radius: 9px; background: var(--bg); padding: 8px 12px; min-height: 44px;
+      }
+      .load-error { color: var(--accent); font-size: 0.9rem; min-height: 1.2em; margin: 12px 0 0; line-height: 1.6; }
+      .load-note { width: min(560px, 100%); color: var(--ink-soft); font-size: 0.82rem; line-height: 1.8; text-align: center; margin: 0; }
+
+      /* ---------- reader screen ---------- */
+      .reader-screen { display: flex; flex-direction: column; height: 100dvh; }
+      .topbar {
+        display: flex; align-items: center; gap: 10px;
+        padding: 8px 12px;
+        background: var(--surface);
+        border-bottom: 1px solid var(--line);
+      }
+      .topbar .bookmeta { flex: 1; min-width: 0; text-align: center; }
+      .book-title {
+        font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+        font-weight: 600; font-size: 0.98rem;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .chap-title { color: var(--ink-soft); font-size: 0.78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .bar-btn {
+        border: 1px solid var(--line); background: var(--surface-2);
+        border-radius: 8px; padding: 6px 14px; font-size: 0.88rem; min-height: 40px;
+        white-space: nowrap;
+      }
+      .progress { height: 4px; background: var(--surface-2); }
+      .progress > div { height: 100%; background: var(--accent); width: 0%; transition: width .3s; }
+
+      .reader {
+        flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
+        padding: 26px 20px 40px;
+        scroll-behavior: smooth;
+      }
+      .reader-inner { max-width: 700px; margin: 0 auto; }
+      .reader h2.chap-head {
+        font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+        font-size: 1.3em; margin: 0 0 1.2em; line-height: 1.5; letter-spacing: 0.03em;
+      }
+      .reader .text-body {
+        font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+        font-size: var(--reader-size);
+        line-height: 2.05;
+        letter-spacing: 0.02em;
+      }
+      .reader p { margin: 0 0 1.1em; }
+      .sent { border-radius: 4px; padding: 1px 0; cursor: pointer; transition: background .15s; }
+      .sent:hover { background: var(--hl); }
+      .sent.current { background: var(--hl-strong); }
+      .reader .end-note { color: var(--ink-soft); font-size: 0.85rem; text-align: center; margin-top: 3em; font-family: inherit; }
+
+      /* ---------- player ---------- */
+      .player {
+        background: var(--surface);
+        border-top: 1px solid var(--line);
+        padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+      }
+      .transport {
+        display: flex; align-items: center; justify-content: center; gap: 6px;
+        max-width: 700px; margin: 0 auto;
+      }
+      .t-btn {
+        border: 1px solid transparent; background: transparent;
+        border-radius: 10px; min-width: 48px; min-height: 48px;
+        display: inline-flex; align-items: center; justify-content: center; gap: 4px;
+        color: var(--ink); padding: 6px 8px; font-size: 0.78rem;
+      }
+      .t-btn svg { width: 24px; height: 24px; flex: none; }
+      .t-btn:disabled { opacity: 0.3; cursor: default; }
+      .t-btn:not(:disabled):active { background: var(--surface-2); }
+      .play-btn {
+        background: var(--accent); color: var(--accent-ink);
+        border-radius: 50%; width: 60px; height: 60px; min-height: 60px;
+        margin: 0 6px; box-shadow: var(--shadow);
+      }
+      .play-btn svg { width: 28px; height: 28px; }
+      .play-btn:active { background: var(--accent); }
+      .chap-nav-label { display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+      .settings {
+        display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; justify-content: center;
+        max-width: 700px; margin: 10px auto 0;
+        border-top: 1px solid var(--line); padding-top: 10px;
+      }
+      .ctl { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--ink-soft); }
+      .ctl output { color: var(--ink); font-variant-numeric: tabular-nums; min-width: 3.2em; }
+      .ctl input[type="range"] { width: 110px; accent-color: var(--accent); min-height: 36px; }
+      .ctl select {
+        border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px;
+        padding: 6px 8px; font-size: 0.85rem; max-width: 190px; min-height: 40px; color: var(--ink);
+      }
+      .ctl .mini-btn {
+        border: 1px solid var(--line); background: var(--surface-2); border-radius: 8px;
+        min-width: 40px; min-height: 40px; font-size: 0.9rem; padding: 4px 8px;
+      }
+      .check { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; padding: 4px 2px; cursor: pointer; }
+      .check input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+      /* ---------- TOC drawer ---------- */
+      .scrim {
+        position: fixed; inset: 0; background: rgba(10, 8, 5, 0.45); z-index: 30;
+      }
+      .drawer {
+        position: fixed; top: 0; left: 0; bottom: 0; z-index: 31;
+        width: min(340px, 86vw);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+        display: flex; flex-direction: column;
+      }
+      .drawer header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 16px; border-bottom: 1px solid var(--line);
+        font-weight: 600;
+      }
+      .drawer ol { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; }
+      .drawer li button {
+        width: 100%; text-align: left; border: none; background: transparent;
+        padding: 11px 12px; border-radius: 8px; font-size: 0.92rem; line-height: 1.5;
+        display: flex; gap: 10px; align-items: baseline; min-height: 44px;
+      }
+      .drawer li button .no { color: var(--ink-soft); font-size: 0.78rem; font-variant-numeric: tabular-nums; flex: none; }
+      .drawer li button.now { background: var(--hl); font-weight: 600; }
+      .drawer li button:active { background: var(--surface-2); }
+
+      @media (max-width: 560px) {
+        .ctl input[type="range"] { width: 88px; }
+        .t-btn { min-width: 42px; padding: 6px 4px; }
+        .chap-nav-label span.lbl { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+
+    <!-- ======== load screen ======== -->
+    <div class="load-wrap" id="loadScreen">
+      <div class="load-card">
+        <h1>本を開く</h1>
+        <p class="lead">EPUB またはテキストファイルを読み込むと、端末内蔵の日本語音声で読み上げます。</p>
+        <div class="drop" id="dropZone">
+          <span class="big">ここにファイルをドロップ</span>
+          対応形式： .epub / .txt
+        </div>
+        <div class="load-actions">
+          <button class="btn primary" id="pickBtn" type="button">ファイルを選ぶ</button>
+          <button class="btn" id="pasteToggle" type="button">テキストを貼る</button>
+          <button class="btn" id="sampleBtn" type="button">サンプルで試す</button>
+        </div>
+        <input type="file" id="fileInput" accept=".epub,.txt,application/epub+zip,text/plain" hidden />
+        <div class="paste-box" id="pasteBox" hidden>
+          <textarea id="pasteText" placeholder="読み上げたい文章をここに貼り付けてください"></textarea>
+          <div class="row">
+            <input type="text" id="pasteTitle" placeholder="タイトル（任意）" />
+            <button class="btn primary" id="pasteGo" type="button">読み始める</button>
+          </div>
+        </div>
+        <p class="load-error" id="loadError" role="alert"></p>
+      </div>
+      <p class="load-note">声はこの端末に内蔵された日本語音声のみを使います。<br />読み上げ中は画面が自動で消えないよう、点灯を維持します（止めると通常に戻ります）。<br />読み込んだ本はこの端末の中にだけ保存され、次に開いたときは前回の本と読んでいた位置が自動で復元されます。どこにも送信されません。</p>
+    </div>
+
+    <!-- ======== reader screen ======== -->
+    <div class="reader-screen" id="readerScreen" hidden>
+      <header class="topbar">
+        <button class="bar-btn" id="tocBtn" type="button">目次</button>
+        <div class="bookmeta">
+          <div class="book-title" id="bookTitle"></div>
+          <div class="chap-title" id="chapTitle"></div>
+        </div>
+        <button class="bar-btn" id="closeBtn" type="button">閉じる</button>
+      </header>
+      <div class="progress"><div id="progressFill"></div></div>
+
+      <main class="reader" id="reader">
+        <div class="reader-inner">
+          <h2 class="chap-head" id="chapHead"></h2>
+          <div class="text-body" id="textBody"></div>
+        </div>
+      </main>
+
+      <footer class="player">
+        <div class="transport">
+          <button class="t-btn" id="prevChapBtn" type="button" aria-label="前の章へ">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 5h2v14H6zM20 5v14L9.5 12z"/></svg>
+            <span class="chap-nav-label"><span class="lbl">前の章</span></span>
+          </button>
+          <button class="t-btn" id="prevSentBtn" type="button" aria-label="前の文へ">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M18 5v14L8 12zM6 5h2v14H6z" opacity="0"/><path d="M17.5 5.5v13L7 12z"/></svg>
+          </button>
+          <button class="t-btn play-btn" id="playBtn" type="button" aria-label="再生">
+            <svg id="playIcon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>
+            <svg id="pauseIcon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" hidden><path d="M7 5h3.5v14H7zM13.5 5H17v14h-3.5z"/></svg>
+          </button>
+          <button class="t-btn" id="nextSentBtn" type="button" aria-label="次の文へ">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6.5 5.5v13L17 12z"/></svg>
+          </button>
+          <button class="t-btn" id="nextChapBtn" type="button" aria-label="次の章へ">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M16 5h2v14h-2zM4 5v14l10.5-7z"/></svg>
+            <span class="chap-nav-label"><span class="lbl">次の章</span></span>
+          </button>
+        </div>
+        <div class="settings">
+          <label class="ctl">声
+            <select id="voiceSel" aria-label="声（日本語のみ）"></select>
+          </label>
+          <label class="ctl">速度
+            <input type="range" id="rateRange" min="0.5" max="2" step="0.05" value="1" aria-label="読み上げ速度" />
+            <output id="rateOut">×1.00</output>
+          </label>
+          <label class="ctl">ピッチ
+            <input type="range" id="pitchRange" min="0.5" max="2" step="0.05" value="1" aria-label="ピッチ（声の高さ）" />
+            <output id="pitchOut">1.00</output>
+          </label>
+          <label class="ctl">タイマー
+            <select id="sleepSel" aria-label="スリープタイマー">
+              <option value="0">なし</option>
+              <option value="15">15分</option>
+              <option value="30">30分</option>
+              <option value="60">60分</option>
+              <option value="chapter">この章まで</option>
+            </select>
+          </label>
+          <span class="ctl">文字
+            <button class="mini-btn" id="fontDown" type="button" aria-label="文字を小さく">A−</button>
+            <button class="mini-btn" id="fontUp" type="button" aria-label="文字を大きく">A＋</button>
+          </span>
+          <label class="check"><input type="checkbox" id="autoScroll" checked />自動スクロール</label>
+          <span class="ctl" id="wakeStatus" hidden>画面：点灯を維持中</span>
+        </div>
+      </footer>
+    </div>
+
+    <!-- ======== TOC drawer ======== -->
+    <div class="scrim" id="scrim" hidden></div>
+    <aside class="drawer" id="tocDrawer" hidden aria-label="目次">
+      <header>
+        <span>目次</span>
+        <button class="bar-btn" id="tocClose" type="button">閉じる</button>
+      </header>
+      <ol id="tocList"></ol>
+    </aside>
+
+    <script>
+      'use strict';
+      /* ================= state ================= */
+      var synth = window.speechSynthesis || null;
+      var state = {
+        book: null,            // { title, chapters: [{title, paras: [[sent,...],...]}] }
+        chapIdx: 0,
+        sentIdx: 0,            // index into flat sentence list of current chapter
+        flat: [],              // [{text, el}]
+        playing: false,
+        rate: 1,
+        pitch: 1,
+        voice: null,           // SpeechSynthesisVoice (ja only)
+        sleepTimerId: null,
+        stopAtChapterEnd: false,
+        fontSize: 19,
+        wakeLock: null
+      };
+      var playToken = 0;       // guards stale utterance callbacks
+
+      var $ = function (id) { return document.getElementById(id); };
+      var els = {
+        loadScreen: $('loadScreen'), readerScreen: $('readerScreen'),
+        dropZone: $('dropZone'), fileInput: $('fileInput'), loadError: $('loadError'),
+        bookTitle: $('bookTitle'), chapTitle: $('chapTitle'), chapHead: $('chapHead'),
+        textBody: $('textBody'), reader: $('reader'), progressFill: $('progressFill'),
+        playBtn: $('playBtn'), playIcon: $('playIcon'), pauseIcon: $('pauseIcon'),
+        prevChapBtn: $('prevChapBtn'), nextChapBtn: $('nextChapBtn'),
+        prevSentBtn: $('prevSentBtn'), nextSentBtn: $('nextSentBtn'),
+        voiceSel: $('voiceSel'), rateRange: $('rateRange'), rateOut: $('rateOut'),
+        pitchRange: $('pitchRange'), pitchOut: $('pitchOut'), sleepSel: $('sleepSel'),
+        autoScroll: $('autoScroll'),
+        wakeStatus: $('wakeStatus'),
+        tocDrawer: $('tocDrawer'), tocList: $('tocList'), scrim: $('scrim')
+      };
+
+      /* ================= text helpers ================= */
+      function splitSentences(text) {
+        var out = [], cur = '', i, ch, nx;
+        for (i = 0; i < text.length; i++) {
+          ch = text[i];
+          cur += ch;
+          if ('。！？!?…'.indexOf(ch) >= 0) {
+            while (i + 1 < text.length && '」』）)】〉》”’・'.indexOf(text[i + 1]) >= 0 && '。！？'.indexOf(text[i + 1]) < 0) {
+              nx = text[i + 1];
+              if (nx === '・') break;
+              cur += text[++i];
+            }
+            if (cur.trim()) out.push(cur);
+            cur = '';
+          }
+        }
+        if (cur.trim()) out.push(cur);
+        return out;
+      }
+      function parasFromText(text) {
+        return text.split(/\n+/).map(function (s) { return s.replace(/\s+/g, ' ').trim(); })
+          .filter(function (s) { return s.length > 0; })
+          .map(function (p) { return splitSentences(p); })
+          .filter(function (sents) { return sents.length > 0; });
+      }
+      function chapterSentenceCount(ch) {
+        return ch.paras.reduce(function (n, p) { return n + p.length; }, 0);
+      }
+
+      /* ================= voices (Japanese only) ================= */
+      function refreshVoices() {
+        if (!synth) return;
+        var voices = synth.getVoices().filter(function (v) {
+          return v.lang && v.lang.toLowerCase().replace(/_/g, '-').indexOf('ja') === 0;
+        });
+        var prev = state.voice ? state.voice.voiceURI : (pendingVoiceURI || els.voiceSel.value || '');
+        els.voiceSel.innerHTML = '';
+        if (voices.length === 0) {
+          var opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '端末の日本語音声（既定）';
+          els.voiceSel.appendChild(opt);
+          state.voice = null;
+          return;
+        }
+        voices.forEach(function (v) {
+          var o = document.createElement('option');
+          o.value = v.voiceURI;
+          o.textContent = v.name.replace(/\s*\(.*?\)\s*/g, '') + (v.default ? '（既定）' : '');
+          els.voiceSel.appendChild(o);
+        });
+        var pick = voices.filter(function (v) { return v.voiceURI === prev; })[0]
+          || voices.filter(function (v) { return v.default; })[0]
+          || voices[0];
+        state.voice = pick;
+        els.voiceSel.value = pick.voiceURI;
+      }
+      if (synth) {
+        refreshVoices();
+        if (typeof synth.onvoiceschanged !== 'undefined') synth.onvoiceschanged = refreshVoices;
+      }
+      els.voiceSel.addEventListener('change', function () {
+        if (!synth) return;
+        var v = synth.getVoices().filter(function (x) { return x.voiceURI === els.voiceSel.value; })[0];
+        state.voice = v || null;
+        pendingVoiceURI = '';
+        saveState();
+        if (state.playing) restartCurrent();
+      });
+
+      /* ================= wake lock (keep screen on while reading) ================= */
+      function requestWakeLock() {
+        if (!('wakeLock' in navigator)) {
+          els.wakeStatus.textContent = '画面：この端末では点灯維持に未対応';
+          els.wakeStatus.hidden = false;
+          return;
+        }
+        if (state.wakeLock) return;
+        navigator.wakeLock.request('screen').then(function (lock) {
+          state.wakeLock = lock;
+          els.wakeStatus.textContent = '画面：点灯を維持中';
+          els.wakeStatus.hidden = false;
+          lock.addEventListener('release', function () {
+            if (state.wakeLock === lock) state.wakeLock = null;
+            if (!state.playing) els.wakeStatus.hidden = true;
+          });
+        }).catch(function () {
+          els.wakeStatus.textContent = '画面：点灯維持を取得できませんでした';
+          els.wakeStatus.hidden = false;
+        });
+      }
+      function releaseWakeLock() {
+        if (state.wakeLock) {
+          try { state.wakeLock.release(); } catch (e) { /* already released */ }
+          state.wakeLock = null;
+        }
+        els.wakeStatus.hidden = true;
+      }
+      document.addEventListener('visibilitychange', function () {
+        // The browser drops the lock when the page is hidden; re-acquire on return.
+        if (document.visibilityState === 'visible' && state.playing) requestWakeLock();
+      });
+
+      /* ================= playback ================= */
+      function currentChapter() { return state.book ? state.book.chapters[state.chapIdx] : null; }
+
+      function speakCurrent() {
+        if (!synth) return;
+        var item = state.flat[state.sentIdx];
+        if (!item) { stopPlayback(); return; }
+        var my = ++playToken;
+        var u = new SpeechSynthesisUtterance(item.text);
+        u.lang = 'ja-JP';
+        if (state.voice) u.voice = state.voice;
+        u.rate = state.rate;
+        u.pitch = state.pitch;
+        u.onend = function () {
+          if (my !== playToken || !state.playing) return;
+          advanceSentence();
+        };
+        u.onerror = function (e) {
+          if (my !== playToken || !state.playing) return;
+          if (e.error === 'interrupted' || e.error === 'canceled' || e.error === 'not-allowed') return;
+          advanceSentence();
+        };
+        highlightCurrent(true);
+        synth.speak(u);
+      }
+      function advanceSentence() {
+        state.sentIdx++;
+        if (state.sentIdx >= state.flat.length) {
+          if (state.stopAtChapterEnd) { stopPlayback(); return; }
+          if (state.chapIdx + 1 < state.book.chapters.length) {
+            loadChapter(state.chapIdx + 1, true);
+          } else {
+            stopPlayback();
+            state.sentIdx = Math.max(0, state.flat.length - 1);
+            highlightCurrent(false);
+          }
+          return;
+        }
+        speakCurrent();
+        updateProgress();
+      }
+      function startPlayback() {
+        if (!synth) { alertSpeechUnsupported(); return; }
+        if (!state.book) return;
+        state.playing = true;
+        playToken++;
+        synth.cancel();
+        requestWakeLock();
+        updatePlayUI();
+        setTimeout(function () { if (state.playing) speakCurrent(); }, 40);
+      }
+      function pausePlayback() {
+        state.playing = false;
+        playToken++;
+        if (synth) synth.cancel();
+        releaseWakeLock();
+        updatePlayUI();
+      }
+      function stopPlayback() {
+        state.playing = false;
+        playToken++;
+        if (synth) synth.cancel();
+        releaseWakeLock();
+        updatePlayUI();
+      }
+      function restartCurrent() {
+        if (!state.playing) return;
+        playToken++;
+        synth.cancel();
+        setTimeout(function () { if (state.playing) speakCurrent(); }, 40);
+      }
+      function updatePlayUI() {
+        els.playIcon.hidden = state.playing;
+        els.pauseIcon.hidden = !state.playing;
+        els.playBtn.setAttribute('aria-label', state.playing ? '一時停止' : '再生');
+      }
+      function alertSpeechUnsupported() {
+        els.loadError.textContent = 'このブラウザでは読み上げ（音声合成）が使えませんでした。';
+      }
+
+      els.playBtn.addEventListener('click', function () {
+        if (state.playing) pausePlayback(); else startPlayback();
+      });
+      els.prevSentBtn.addEventListener('click', function () {
+        if (!state.book) return;
+        state.sentIdx = Math.max(0, state.sentIdx - 1);
+        highlightCurrent(true);
+        updateProgress();
+        if (state.playing) restartCurrent();
+      });
+      els.nextSentBtn.addEventListener('click', function () {
+        if (!state.book) return;
+        state.sentIdx = Math.min(state.flat.length - 1, state.sentIdx + 1);
+        highlightCurrent(true);
+        updateProgress();
+        if (state.playing) restartCurrent();
+      });
+      els.prevChapBtn.addEventListener('click', function () {
+        if (state.book && state.chapIdx > 0) loadChapter(state.chapIdx - 1, state.playing);
+      });
+      els.nextChapBtn.addEventListener('click', function () {
+        if (state.book && state.chapIdx + 1 < state.book.chapters.length) loadChapter(state.chapIdx + 1, state.playing);
+      });
+
+      /* settings */
+      els.rateRange.addEventListener('input', function () {
+        state.rate = parseFloat(els.rateRange.value);
+        els.rateOut.textContent = '×' + state.rate.toFixed(2);
+      });
+      els.rateRange.addEventListener('change', function () { restartCurrent(); });
+      els.pitchRange.addEventListener('input', function () {
+        state.pitch = parseFloat(els.pitchRange.value);
+        els.pitchOut.textContent = state.pitch.toFixed(2);
+      });
+      els.pitchRange.addEventListener('change', function () { restartCurrent(); });
+      els.sleepSel.addEventListener('change', function () {
+        if (state.sleepTimerId) { clearTimeout(state.sleepTimerId); state.sleepTimerId = null; }
+        state.stopAtChapterEnd = false;
+        var v = els.sleepSel.value;
+        if (v === 'chapter') { state.stopAtChapterEnd = true; return; }
+        var min = parseInt(v, 10);
+        if (min > 0) {
+          state.sleepTimerId = setTimeout(function () { pausePlayback(); }, min * 60 * 1000);
+        }
+      });
+      $('fontUp').addEventListener('click', function () { setFontSize(state.fontSize + 2); });
+      $('fontDown').addEventListener('click', function () { setFontSize(state.fontSize - 2); });
+      function setFontSize(px) {
+        state.fontSize = Math.min(30, Math.max(14, px));
+        document.documentElement.style.setProperty('--reader-size', state.fontSize + 'px');
+      }
+
+      /* ================= rendering ================= */
+      function loadChapter(idx, autoplay) {
+        state.chapIdx = idx;
+        state.sentIdx = 0;
+        var ch = currentChapter();
+        els.chapHead.textContent = ch.title;
+        els.chapTitle.textContent = ch.title + '　（' + (idx + 1) + ' / ' + state.book.chapters.length + '章）';
+        els.textBody.innerHTML = '';
+        state.flat = [];
+        ch.paras.forEach(function (para) {
+          var p = document.createElement('p');
+          para.forEach(function (sent) {
+            var span = document.createElement('span');
+            span.className = 'sent';
+            span.textContent = sent;
+            span.setAttribute('data-i', String(state.flat.length));
+            p.appendChild(span);
+            state.flat.push({ text: sent, el: span });
+          });
+          els.textBody.appendChild(p);
+        });
+        if (idx + 1 >= state.book.chapters.length) {
+          var end = document.createElement('p');
+          end.className = 'end-note';
+          end.textContent = '― おわり ―';
+          els.textBody.appendChild(end);
+        }
+        els.reader.scrollTop = 0;
+        els.prevChapBtn.disabled = idx <= 0;
+        els.nextChapBtn.disabled = idx + 1 >= state.book.chapters.length;
+        buildToc();
+        highlightCurrent(false);
+        updateProgress();
+        if (autoplay) {
+          state.playing = true;
+          playToken++;
+          if (synth) synth.cancel();
+          requestWakeLock();
+          updatePlayUI();
+          setTimeout(function () { if (state.playing) speakCurrent(); }, 40);
+        }
+      }
+      function highlightCurrent(scroll) {
+        var prev = els.textBody.querySelector('.sent.current');
+        if (prev) prev.classList.remove('current');
+        var item = state.flat[state.sentIdx];
+        if (item && item.el) {
+          item.el.classList.add('current');
+          if (scroll && els.autoScroll.checked) {
+            item.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
+        }
+        saveState();
+      }
+      function updateProgress() {
+        if (!state.book) { els.progressFill.style.width = '0%'; return; }
+        var before = 0, total = 0, i;
+        for (i = 0; i < state.book.chapters.length; i++) {
+          var n = chapterSentenceCount(state.book.chapters[i]);
+          total += n;
+          if (i < state.chapIdx) before += n;
+        }
+        var done = before + state.sentIdx;
+        els.progressFill.style.width = (total ? (done / total) * 100 : 0) + '%';
+      }
+      els.textBody.addEventListener('click', function (e) {
+        var t = e.target;
+        if (t && t.classList && t.classList.contains('sent')) {
+          state.sentIdx = parseInt(t.getAttribute('data-i'), 10) || 0;
+          highlightCurrent(false);
+          updateProgress();
+          if (state.playing) restartCurrent();
+        }
+      });
+
+      /* ================= TOC ================= */
+      function buildToc() {
+        els.tocList.innerHTML = '';
+        if (!state.book) return;
+        state.book.chapters.forEach(function (ch, i) {
+          var li = document.createElement('li');
+          var b = document.createElement('button');
+          b.type = 'button';
+          if (i === state.chapIdx) b.className = 'now';
+          var no = document.createElement('span');
+          no.className = 'no';
+          no.textContent = String(i + 1);
+          var tx = document.createElement('span');
+          tx.textContent = ch.title;
+          b.appendChild(no); b.appendChild(tx);
+          b.addEventListener('click', function () {
+            closeToc();
+            loadChapter(i, state.playing);
+          });
+          li.appendChild(b);
+          els.tocList.appendChild(li);
+        });
+      }
+      function openToc() {
+        buildToc();
+        els.tocDrawer.hidden = false;
+        els.scrim.hidden = false;
+        var now = els.tocList.querySelector('button.now');
+        if (now) now.scrollIntoView({ block: 'center' });
+      }
+      function closeToc() { els.tocDrawer.hidden = true; els.scrim.hidden = true; }
+      $('tocBtn').addEventListener('click', openToc);
+      $('tocClose').addEventListener('click', closeToc);
+      els.scrim.addEventListener('click', closeToc);
+
+      /* ================= opening a book ================= */
+      function openBook(book, resume, skipPersist) {
+        stopPlayback();
+        state.book = book;
+        els.bookTitle.textContent = book.title;
+        els.loadScreen.hidden = true;
+        els.readerScreen.hidden = false;
+        var startChap = 0, startSent = 0;
+        if (resume && resume.bookTitle === book.title) {
+          if (resume.chapIdx >= 0 && resume.chapIdx < book.chapters.length) startChap = resume.chapIdx;
+          startSent = Math.max(0, resume.sentIdx || 0);
+        }
+        loadChapter(startChap, false);
+        if (startSent > 0) {
+          state.sentIdx = Math.min(startSent, Math.max(0, state.flat.length - 1));
+          highlightCurrent(true);
+          updateProgress();
+        }
+        refreshVoices();
+        if (!skipPersist) idbSaveBook(book);
+        saveState();
+      }
+      $('closeBtn').addEventListener('click', function () {
+        stopPlayback();
+        state.book = null;
+        els.readerScreen.hidden = true;
+        els.loadScreen.hidden = false;
+        closeToc();
+      });
+
+      /* ---------- file loading ---------- */
+      function showError(msg) { els.loadError.textContent = msg || ''; }
+      $('pickBtn').addEventListener('click', function () { els.fileInput.click(); });
+      els.fileInput.addEventListener('change', function () {
+        if (els.fileInput.files && els.fileInput.files[0]) handleFile(els.fileInput.files[0]);
+        els.fileInput.value = '';
+      });
+      ['dragenter', 'dragover'].forEach(function (ev) {
+        els.dropZone.addEventListener(ev, function (e) { e.preventDefault(); els.dropZone.classList.add('drag'); });
+      });
+      ['dragleave', 'drop'].forEach(function (ev) {
+        els.dropZone.addEventListener(ev, function (e) { e.preventDefault(); els.dropZone.classList.remove('drag'); });
+      });
+      els.dropZone.addEventListener('drop', function (e) {
+        var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (f) handleFile(f);
+      });
+      els.dropZone.addEventListener('click', function () { els.fileInput.click(); });
+
+      function handleFile(file) {
+        showError('');
+        var name = file.name || '';
+        if (/\.epub$/i.test(name)) {
+          file.arrayBuffer().then(function (buf) {
+            return parseEpub(buf);
+          }).then(function (book) {
+            if (!book.chapters.length) { showError('本文を取り出せませんでした。別のEPUBでお試しください。'); return; }
+            openBook(book);
+          }).catch(function () {
+            showError('EPUBの読み込みに失敗しました。ファイルが壊れているか、対応していない形式です。');
+          });
+        } else {
+          readTextFile(file).then(function (text) {
+            openBook(bookFromPlainText(name.replace(/\.txt$/i, ''), text));
+          }).catch(function () { showError('テキストの読み込みに失敗しました。'); });
+        }
+      }
+      function readTextFile(file) {
+        return file.arrayBuffer().then(function (buf) {
+          var utf8 = new TextDecoder('utf-8').decode(buf);
+          var bad = (utf8.match(/�/g) || []).length;
+          if (bad > 3) {
+            try { return new TextDecoder('shift_jis').decode(buf); } catch (e) { return utf8; }
+          }
+          return utf8;
+        });
+      }
+      function bookFromPlainText(title, text) {
+        // split into chapters on lines like 「第○章」「第○話」 when present
+        var lines = text.replace(/\r\n?/g, '\n').split('\n');
+        var chapters = [], curTitle = title || 'テキスト', cur = [];
+        var headRe = /^第[0-9０-９一二三四五六七八九十百千]+[章話節].{0,30}$/;
+        function flush() {
+          var paras = parasFromText(cur.join('\n'));
+          if (paras.length) chapters.push({ title: curTitle, paras: paras });
+          cur = [];
+        }
+        lines.forEach(function (ln) {
+          var t = ln.trim();
+          if (headRe.test(t) && cur.join('').trim().length > 0) { flush(); curTitle = t; }
+          else if (headRe.test(t) && chapters.length === 0 && cur.join('').trim().length === 0) { curTitle = t; }
+          else cur.push(ln);
+        });
+        flush();
+        if (!chapters.length) chapters.push({ title: curTitle, paras: parasFromText(text) });
+        return { title: title || 'テキスト', chapters: chapters };
+      }
+
+      /* ---------- paste & sample ---------- */
+      $('pasteToggle').addEventListener('click', function () {
+        $('pasteBox').hidden = !$('pasteBox').hidden;
+        if (!$('pasteBox').hidden) $('pasteText').focus();
+      });
+      $('pasteGo').addEventListener('click', function () {
+        var text = $('pasteText').value;
+        if (!text.trim()) { showError('テキストが空です。'); return; }
+        showError('');
+        openBook(bookFromPlainText($('pasteTitle').value.trim() || '貼り付けテキスト', text));
+      });
+      $('sampleBtn').addEventListener('click', function () {
+        showError('');
+        openBook({
+          title: 'サンプル',
+          chapters: [
+            { title: '第一章　試し読み', paras: parasFromText(
+              'これは、朗読リーダーの試し読み用テキストです。再生ボタンを押すと、この文章が一句ずつ読み上げられます。\n' +
+              '読み上げの速さは「速度」のつまみで、声の高さは「ピッチ」のつまみで変えられます。文章をタップすると、その文から読み直します。\n' +
+              '章の移動は、左端と右端のボタン、または「目次」から行えます。') },
+            { title: '第二章　次の章', paras: parasFromText(
+              '二つ目の章に移りました。前の章に戻るには、左端の「前の章」ボタンを押してください。\n' +
+              'タイマーを設定すると、指定した時間が過ぎたところ、またはこの章の終わりで自動的に止まります。') }
+          ]
+        });
+      });
+
+      /* ================= EPUB parsing ================= */
+      function resolvePath(baseDir, href) {
+        href = href.split('#')[0];
+        try { href = decodeURIComponent(href); } catch (e) { /* keep raw */ }
+        var parts = (baseDir + href).split('/');
+        var out = [];
+        parts.forEach(function (p) {
+          if (p === '..') out.pop();
+          else if (p !== '.' && p !== '') out.push(p);
+        });
+        return out.join('/');
+      }
+      function extractBodyText(doc) {
+        if (!doc || !doc.body) return '';
+        var out = '';
+        (function walk(node) {
+          if (node.nodeType === 3) { out += node.nodeValue; return; }
+          if (node.nodeType !== 1) return;
+          var tag = node.tagName.toLowerCase();
+          if (tag === 'script' || tag === 'style' || tag === 'rt' || tag === 'rp') return;
+          var block = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'section', 'article', 'tr'].indexOf(tag) >= 0;
+          for (var i = 0; i < node.childNodes.length; i++) walk(node.childNodes[i]);
+          if (block || tag === 'br') out += '\n';
+        })(doc.body);
+        return out;
+      }
+      function firstHeading(doc) {
+        if (!doc) return '';
+        var h = doc.querySelector('h1, h2, h3, title');
+        return h ? (h.textContent || '').replace(/\s+/g, ' ').trim() : '';
+      }
+      function parseEpub(buf) {
+        return JSZip.loadAsync(buf).then(function (zip) {
+          var containerFile = zip.file('META-INF/container.xml');
+          if (!containerFile) throw new Error('no container');
+          return containerFile.async('string').then(function (containerXml) {
+            var cdoc = new DOMParser().parseFromString(containerXml, 'text/xml');
+            var rootfile = cdoc.querySelector('rootfile');
+            var opfPath = rootfile ? rootfile.getAttribute('full-path') : 'OEBPS/content.opf';
+            var opfFile = zip.file(opfPath);
+            if (!opfFile) throw new Error('no opf');
+            var baseDir = opfPath.indexOf('/') >= 0 ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+            return opfFile.async('string').then(function (opfXml) {
+              var opf = new DOMParser().parseFromString(opfXml, 'text/xml');
+              var titleEl = opf.querySelector('metadata > title, title');
+              var bookTitle = titleEl ? (titleEl.textContent || '').trim() : 'EPUB';
+              var manifest = {};
+              Array.prototype.forEach.call(opf.querySelectorAll('manifest > item'), function (it) {
+                manifest[it.getAttribute('id')] = {
+                  href: it.getAttribute('href') || '',
+                  type: it.getAttribute('media-type') || '',
+                  props: it.getAttribute('properties') || ''
+                };
+              });
+              var spine = [];
+              Array.prototype.forEach.call(opf.querySelectorAll('spine > itemref'), function (ref) {
+                var item = manifest[ref.getAttribute('idref')];
+                if (item && /x?html/.test(item.type)) spine.push(item);
+              });
+              // TOC titles from NCX
+              var tocMap = {};
+              var ncxItem = null, navItem = null, id;
+              for (id in manifest) {
+                if (manifest[id].type === 'application/x-dtbncx+xml') ncxItem = manifest[id];
+                if (/\bnav\b/.test(manifest[id].props)) navItem = manifest[id];
+              }
+              var tocPromise = Promise.resolve();
+              if (ncxItem) {
+                var ncxFile = zip.file(resolvePath(baseDir, ncxItem.href));
+                if (ncxFile) tocPromise = ncxFile.async('string').then(function (xml) {
+                  var ncx = new DOMParser().parseFromString(xml, 'text/xml');
+                  Array.prototype.forEach.call(ncx.querySelectorAll('navPoint'), function (np) {
+                    var label = np.querySelector('navLabel > text');
+                    var content = np.querySelector('content');
+                    if (label && content) {
+                      var src = (content.getAttribute('src') || '').split('#')[0];
+                      tocMap[src.split('/').pop()] = (label.textContent || '').replace(/\s+/g, ' ').trim();
+                    }
+                  });
+                }).catch(function () {});
+              } else if (navItem) {
+                var navFile = zip.file(resolvePath(baseDir, navItem.href));
+                if (navFile) tocPromise = navFile.async('string').then(function (html) {
+                  var ndoc = new DOMParser().parseFromString(html, 'text/html');
+                  Array.prototype.forEach.call(ndoc.querySelectorAll('a'), function (a) {
+                    var href = (a.getAttribute('href') || '').split('#')[0];
+                    if (href) tocMap[href.split('/').pop()] = (a.textContent || '').replace(/\s+/g, ' ').trim();
+                  });
+                }).catch(function () {});
+              }
+              return tocPromise.then(function () {
+                var jobs = spine.map(function (item) {
+                  var path = resolvePath(baseDir, item.href);
+                  var f = zip.file(path);
+                  if (!f) return Promise.resolve(null);
+                  return f.async('string').then(function (html) {
+                    var doc = new DOMParser().parseFromString(html, 'text/html');
+                    var text = extractBodyText(doc);
+                    var paras = parasFromText(text);
+                    if (!paras.length) return null;
+                    var fname = item.href.split('/').pop();
+                    var t = tocMap[fname] || firstHeading(doc) || '';
+                    return { title: t, paras: paras };
+                  }).catch(function () { return null; });
+                });
+                return Promise.all(jobs).then(function (chs) {
+                  var chapters = chs.filter(Boolean);
+                  chapters.forEach(function (ch, i) {
+                    if (!ch.title) ch.title = '第' + (i + 1) + '章';
+                  });
+                  return { title: bookTitle || 'EPUB', chapters: chapters };
+                });
+              });
+            });
+          });
+        });
+      }
+
+      /* ================= persistence (remember the book + position on this device only) ================= */
+      var LS_KEY = 'roudoku-reader-state-v1';
+      var IDB_NAME = 'roudoku-reader', IDB_STORE = 'books', IDB_KEY = 'lastBook';
+      var pendingVoiceURI = '';
+      function saveState() {
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify({
+            rate: state.rate, pitch: state.pitch, fontSize: state.fontSize,
+            voiceURI: state.voice ? state.voice.voiceURI : (pendingVoiceURI || ''),
+            bookTitle: state.book ? state.book.title : '',
+            chapIdx: state.chapIdx, sentIdx: state.sentIdx, ts: Date.now()
+          }));
+        } catch (e) { /* storage unavailable: resume simply stays off */ }
+      }
+      function loadSavedState() {
+        try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; }
+      }
+      function idbOpen() {
+        return new Promise(function (res, rej) {
+          if (!('indexedDB' in window)) { rej(new Error('no idb')); return; }
+          var rq = indexedDB.open(IDB_NAME, 1);
+          rq.onupgradeneeded = function () { rq.result.createObjectStore(IDB_STORE); };
+          rq.onsuccess = function () { res(rq.result); };
+          rq.onerror = function () { rej(rq.error); };
+        });
+      }
+      function idbSaveBook(book) {
+        idbOpen().then(function (db) {
+          var tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put({ title: book.title, chapters: book.chapters, savedAt: Date.now() }, IDB_KEY);
+        }).catch(function () { /* resume stays off if storage is unavailable */ });
+      }
+      function idbLoadBook() {
+        return idbOpen().then(function (db) {
+          return new Promise(function (res, rej) {
+            var rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(IDB_KEY);
+            rq.onsuccess = function () { res(rq.result || null); };
+            rq.onerror = function () { rej(rq.error); };
+          });
+        });
+      }
+
+      /* ================= init: restore settings, then reopen the last book ================= */
+      (function init() {
+        var saved = loadSavedState();
+        if (saved) {
+          if (saved.rate) {
+            state.rate = saved.rate;
+            els.rateRange.value = saved.rate;
+            els.rateOut.textContent = '×' + Number(saved.rate).toFixed(2);
+          }
+          if (saved.pitch) {
+            state.pitch = saved.pitch;
+            els.pitchRange.value = saved.pitch;
+            els.pitchOut.textContent = Number(saved.pitch).toFixed(2);
+          }
+          if (saved.fontSize) setFontSize(saved.fontSize);
+          if (saved.voiceURI) pendingVoiceURI = saved.voiceURI;
+        }
+        idbLoadBook().then(function (rec) {
+          if (rec && rec.chapters && rec.chapters.length && !state.book) {
+            openBook({ title: rec.title, chapters: rec.chapters }, saved, true);
+          }
+        }).catch(function () { /* no saved book: stay on the load screen */ });
+      })();
+
+      if (!synth) {
+        showError('このブラウザでは読み上げ（音声合成）が使えません。iPhoneではSafariで開くと使えます。');
+      }
+    </script>
+  </body>
+</html>

@@ -263,7 +263,7 @@
         </div>
         <p class="load-error" id="loadError" role="alert"></p>
       </div>
-      <p class="load-note">声はこの端末に内蔵された日本語音声のみを使います。<br />読み上げ中は画面が自動で消えないよう、点灯を維持します（止めると通常に戻ります）。<br />読み込んだ本はこの画面の中だけで扱われ、どこにも送信されません。</p>
+      <p class="load-note">声はこの端末に内蔵された日本語音声のみを使います。<br />読み上げ中は画面が自動で消えないよう、点灯を維持します（止めると通常に戻ります）。<br />読み込んだ本はこの端末の中にだけ保存され、次に開いたときは前回の本と読んでいた位置が自動で復元されます。どこにも送信されません。</p>
     </div>
 
     <!-- ======== reader screen ======== -->
@@ -418,7 +418,7 @@
         var voices = synth.getVoices().filter(function (v) {
           return v.lang && v.lang.toLowerCase().replace(/_/g, '-').indexOf('ja') === 0;
         });
-        var prev = state.voice ? state.voice.voiceURI : (els.voiceSel.value || '');
+        var prev = state.voice ? state.voice.voiceURI : (pendingVoiceURI || els.voiceSel.value || '');
         els.voiceSel.innerHTML = '';
         if (voices.length === 0) {
           var opt = document.createElement('option');
@@ -448,6 +448,8 @@
         if (!synth) return;
         var v = synth.getVoices().filter(function (x) { return x.voiceURI === els.voiceSel.value; })[0];
         state.voice = v || null;
+        pendingVoiceURI = '';
+        saveState();
         if (state.playing) restartCurrent();
       });
 
@@ -668,6 +670,7 @@
             item.el.scrollIntoView({ block: 'center', behavior: 'smooth' });
           }
         }
+        saveState();
       }
       function updateProgress() {
         if (!state.book) { els.progressFill.style.width = '0%'; return; }
@@ -726,14 +729,26 @@
       els.scrim.addEventListener('click', closeToc);
 
       /* ================= opening a book ================= */
-      function openBook(book) {
+      function openBook(book, resume, skipPersist) {
         stopPlayback();
         state.book = book;
         els.bookTitle.textContent = book.title;
         els.loadScreen.hidden = true;
         els.readerScreen.hidden = false;
-        loadChapter(0, false);
+        var startChap = 0, startSent = 0;
+        if (resume && resume.bookTitle === book.title) {
+          if (resume.chapIdx >= 0 && resume.chapIdx < book.chapters.length) startChap = resume.chapIdx;
+          startSent = Math.max(0, resume.sentIdx || 0);
+        }
+        loadChapter(startChap, false);
+        if (startSent > 0) {
+          state.sentIdx = Math.min(startSent, Math.max(0, state.flat.length - 1));
+          highlightCurrent(true);
+          updateProgress();
+        }
         refreshVoices();
+        if (!skipPersist) idbSaveBook(book);
+        saveState();
       }
       $('closeBtn').addEventListener('click', function () {
         stopPlayback();
@@ -955,6 +970,72 @@
           });
         });
       }
+
+      /* ================= persistence (remember the book + position on this device only) ================= */
+      var LS_KEY = 'roudoku-reader-state-v1';
+      var IDB_NAME = 'roudoku-reader', IDB_STORE = 'books', IDB_KEY = 'lastBook';
+      var pendingVoiceURI = '';
+      function saveState() {
+        try {
+          localStorage.setItem(LS_KEY, JSON.stringify({
+            rate: state.rate, pitch: state.pitch, fontSize: state.fontSize,
+            voiceURI: state.voice ? state.voice.voiceURI : (pendingVoiceURI || ''),
+            bookTitle: state.book ? state.book.title : '',
+            chapIdx: state.chapIdx, sentIdx: state.sentIdx, ts: Date.now()
+          }));
+        } catch (e) { /* storage unavailable: resume simply stays off */ }
+      }
+      function loadSavedState() {
+        try { return JSON.parse(localStorage.getItem(LS_KEY) || 'null'); } catch (e) { return null; }
+      }
+      function idbOpen() {
+        return new Promise(function (res, rej) {
+          if (!('indexedDB' in window)) { rej(new Error('no idb')); return; }
+          var rq = indexedDB.open(IDB_NAME, 1);
+          rq.onupgradeneeded = function () { rq.result.createObjectStore(IDB_STORE); };
+          rq.onsuccess = function () { res(rq.result); };
+          rq.onerror = function () { rej(rq.error); };
+        });
+      }
+      function idbSaveBook(book) {
+        idbOpen().then(function (db) {
+          var tx = db.transaction(IDB_STORE, 'readwrite');
+          tx.objectStore(IDB_STORE).put({ title: book.title, chapters: book.chapters, savedAt: Date.now() }, IDB_KEY);
+        }).catch(function () { /* resume stays off if storage is unavailable */ });
+      }
+      function idbLoadBook() {
+        return idbOpen().then(function (db) {
+          return new Promise(function (res, rej) {
+            var rq = db.transaction(IDB_STORE, 'readonly').objectStore(IDB_STORE).get(IDB_KEY);
+            rq.onsuccess = function () { res(rq.result || null); };
+            rq.onerror = function () { rej(rq.error); };
+          });
+        });
+      }
+
+      /* ================= init: restore settings, then reopen the last book ================= */
+      (function init() {
+        var saved = loadSavedState();
+        if (saved) {
+          if (saved.rate) {
+            state.rate = saved.rate;
+            els.rateRange.value = saved.rate;
+            els.rateOut.textContent = '×' + Number(saved.rate).toFixed(2);
+          }
+          if (saved.pitch) {
+            state.pitch = saved.pitch;
+            els.pitchRange.value = saved.pitch;
+            els.pitchOut.textContent = Number(saved.pitch).toFixed(2);
+          }
+          if (saved.fontSize) setFontSize(saved.fontSize);
+          if (saved.voiceURI) pendingVoiceURI = saved.voiceURI;
+        }
+        idbLoadBook().then(function (rec) {
+          if (rec && rec.chapters && rec.chapters.length && !state.book) {
+            openBook({ title: rec.title, chapters: rec.chapters }, saved, true);
+          }
+        }).catch(function () { /* no saved book: stay on the load screen */ });
+      })();
 
       if (!synth) {
         showError('このブラウザでは読み上げ（音声合成）が使えません。iPhoneではSafariで開くと使えます。');
