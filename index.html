@@ -122,6 +122,7 @@
         border-bottom: 1px solid var(--line);
       }
       .topbar .bookmeta { flex: 1; min-width: 0; text-align: center; }
+      .cover-thumb { height: 42px; width: auto; border-radius: 3px; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
       .book-title {
         font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
         font-weight: 600; font-size: 0.98rem;
@@ -270,6 +271,7 @@
     <div class="reader-screen" id="readerScreen" hidden>
       <header class="topbar">
         <button class="bar-btn" id="tocBtn" type="button">目次</button>
+        <img class="cover-thumb" id="coverThumb" alt="" hidden />
         <div class="bookmeta">
           <div class="book-title" id="bookTitle"></div>
           <div class="chap-title" id="chapTitle"></div>
@@ -371,7 +373,7 @@
       var els = {
         loadScreen: $('loadScreen'), readerScreen: $('readerScreen'),
         dropZone: $('dropZone'), fileInput: $('fileInput'), loadError: $('loadError'),
-        bookTitle: $('bookTitle'), chapTitle: $('chapTitle'), chapHead: $('chapHead'),
+        bookTitle: $('bookTitle'), chapTitle: $('chapTitle'), chapHead: $('chapHead'), coverThumb: $('coverThumb'),
         textBody: $('textBody'), reader: $('reader'), progressFill: $('progressFill'),
         playBtn: $('playBtn'), playIcon: $('playIcon'), pauseIcon: $('pauseIcon'),
         prevChapBtn: $('prevChapBtn'), nextChapBtn: $('nextChapBtn'),
@@ -733,6 +735,8 @@
         stopPlayback();
         state.book = book;
         els.bookTitle.textContent = book.title;
+        if (book.coverUrl) { els.coverThumb.src = book.coverUrl; els.coverThumb.hidden = false; }
+        else { els.coverThumb.hidden = true; els.coverThumb.removeAttribute('src'); }
         els.loadScreen.hidden = true;
         els.readerScreen.hidden = false;
         var startChap = 0, startSent = 0;
@@ -907,6 +911,20 @@
                   props: it.getAttribute('properties') || ''
                 };
               });
+              var coverPromise = Promise.resolve(null);
+              var coverItem = null, cid2;
+              for (cid2 in manifest) { if (/\bcover-image\b/.test(manifest[cid2].props)) coverItem = manifest[cid2]; }
+              if (!coverItem) {
+                var cmEl = opf.querySelector('metadata > meta[name="cover"]');
+                if (cmEl && manifest[cmEl.getAttribute('content')]) coverItem = manifest[cmEl.getAttribute('content')];
+              }
+              if (coverItem) {
+                var coverFile = zip.file(resolvePath(baseDir, coverItem.href));
+                if (coverFile) coverPromise = coverFile.async('blob').then(function (b) {
+                  var typed = coverItem.type ? new Blob([b], { type: coverItem.type }) : b;
+                  return URL.createObjectURL(typed);
+                }).catch(function () { return null; });
+              }
               var spine = [];
               Array.prototype.forEach.call(opf.querySelectorAll('spine > itemref'), function (ref) {
                 var item = manifest[ref.getAttribute('idref')];
@@ -943,7 +961,8 @@
                   });
                 }).catch(function () {});
               }
-              return tocPromise.then(function () {
+              return Promise.all([tocPromise, coverPromise]).then(function (res) {
+                var coverUrl = res[1];
                 var jobs = spine.map(function (item) {
                   var path = resolvePath(baseDir, item.href);
                   var f = zip.file(path);
@@ -963,7 +982,7 @@
                   chapters.forEach(function (ch, i) {
                     if (!ch.title) ch.title = '第' + (i + 1) + '章';
                   });
-                  return { title: bookTitle || 'EPUB', chapters: chapters };
+                  return { title: bookTitle || 'EPUB', chapters: chapters, coverUrl: coverUrl };
                 });
               });
             });
