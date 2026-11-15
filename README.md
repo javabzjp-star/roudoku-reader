@@ -1,3 +1,5 @@
+> 【現行運用・2026-11-15】正本と完了条件は[Drive正本運用ルール v1.0.0](https://drive.google.com/file/d/1PeAdnvfIF-KYRdlzvpLWSZAQqgPMRBKK/view?usp=drivesdk)、入口は[Driveの00_目次.md](https://drive.google.com/file/d/1foy4xsO0JgCHLI__2LiP599l31DptJP0/view)。保存・受渡し・合言葉・作業完了について本規則を優先する。本文に残るGitHub main正本／push・PR必須／二重保管の旧手順は、その部分を本規則で置き換える。技術仕様・検証・作品条件は引き続き有効。
+
 # 朗読リーダー（roudoku-reader）
 
 EPUB／テキストを、端末内蔵の日本語音声で読み上げる Web リーダー。
